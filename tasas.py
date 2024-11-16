@@ -103,7 +103,7 @@ ax2.boxplot(boxplot_data, labels=boxplot_labels)
 # Agregar puntos rojos para los valores actuales
 for i, (plazo, data) in enumerate(tasas_bonos.items(), start=1):
     if plazo in datos_actuales:
-        ax2.plot(i, datos_actuales[plazo], 'ro')  # Valor actual en rojo
+        ax2.plot(i, datos_actuales[plazo], color='blue', marker='o')  # Valor actual en rojo
         ax2.plot(i, datos_comparados[plazo], color='orange', marker='o')  # Valor comparado en azul
 
 # Agregar el valor actual de la tasa Fed
