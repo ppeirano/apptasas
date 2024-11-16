@@ -7,10 +7,6 @@ from datetime import datetime, timedelta
 # Configuración de la clave de API de FRED
 fred = Fred(api_key='f5c520998557f7aec96adf6284098978')
 
-# Fechas de inicio y fin para descargar los datos históricos
-fecha_fin = datetime.today()
-fecha_inicio = fecha_fin - timedelta(days=365 * 2)  # Últimos 2 años de datos
-
 # Descargar todos los datos de una sola vez
 @st.cache_data
 def descargar_datos():
@@ -29,80 +25,94 @@ def descargar_datos():
     }
     tasas_bonos = {}
     for plazo, serie_id in series_ids.items():
-        tasas_bonos[plazo] = fred.get_series(serie_id, start=fecha_inicio, end=fecha_fin)
+        tasas_bonos[plazo] = fred.get_series(serie_id)
 
-    tasas_fed = fred.get_series('FEDFUNDS', start=fecha_inicio, end=fecha_fin)
+    tasas_fed = fred.get_series('FEDFUNDS')
     return tasas_bonos, tasas_fed
 
 # Cargar los datos
 tasas_bonos, tasas_fed = descargar_datos()
 
-# Función para obtener datos para una fecha específica
-def obtener_datos_para_fecha(datos, fecha):
-    return {plazo: datos[plazo].loc[:fecha].iloc[-1] for plazo in datos if not datos[plazo].loc[:fecha].empty}
-
-# Función para obtener la última tasa de la Fed para una fecha específica
-def obtener_tasa_fed_para_fecha(datos, fecha):
-    try:
-        return datos.loc[:fecha].iloc[-1]
-    except IndexError:
-        return None
-
 # Configuración de la interfaz de Streamlit
 st.title('Curvas de Rendimiento de Bonos del Tesoro de EE. UU.')
-st.write('Comparación de la curva actual con una fecha seleccionada y visualización de la tasa de los fondos federales.')
+st.write('Comparación de la curva de rendimiento y visualización de la tasa de los fondos federales.')
 
-# Fecha por defecto: actual menos 30 días
-fecha_por_defecto = datetime.today() - timedelta(days=30)
-fecha_seleccionada = st.date_input('Seleccione una fecha para comparar', fecha_por_defecto)
+# Controles para seleccionar fechas (ahora "Desde" y "Hasta")
+col1, col2 = st.columns(2)
 
-# Fechas utilizadas
-fecha_actual = datetime.today()
+with col1:
+    fecha_comparar = st.date_input('Seleccione la fecha Desde (Naranja)', datetime.today() - timedelta(days=30))
+
+with col2:
+    fecha_actual = st.date_input('Seleccione la fecha Hasta (Azul)', datetime.today())
+
+# Convertir fechas seleccionadas a strings
 fecha_actual_str = fecha_actual.strftime('%Y-%m-%d')
-fecha_comparar_str = fecha_seleccionada.strftime('%Y-%m-%d')
+fecha_comparar_str = fecha_comparar.strftime('%Y-%m-%d')
 
-# Obtener datos para las fechas seleccionadas
-datos_actuales = obtener_datos_para_fecha(tasas_bonos, fecha_actual)
-datos_seleccionados = obtener_datos_para_fecha(tasas_bonos, fecha_seleccionada)
-
-tasa_fed_actual = obtener_tasa_fed_para_fecha(tasas_fed, fecha_actual)
-tasa_fed_seleccionada = obtener_tasa_fed_para_fecha(tasas_fed, fecha_seleccionada)
-
-# Conversión a DataFrame para facilitar la manipulación
-df_actual = pd.DataFrame(list(datos_actuales.items()), columns=['Plazo', 'Rendimiento'])
-df_seleccionado = pd.DataFrame(list(datos_seleccionados.items()), columns=['Plazo', 'Rendimiento'])
-
-# Reemplazo de NaN por 0 en los valores de rendimiento
-df_actual['Rendimiento'] = df_actual['Rendimiento'].fillna(0)
-df_seleccionado['Rendimiento'] = df_seleccionado['Rendimiento'].fillna(0)
+# Filtrar datos entre las fechas seleccionadas
+tasas_bonos_filtradas = {
+    plazo: data.loc[fecha_comparar:fecha_actual] for plazo, data in tasas_bonos.items()
+}
+tasas_fed_filtrada = tasas_fed.loc[fecha_comparar:fecha_actual]
 
 # Gráfico de las curvas de rendimiento
-fig, ax = plt.subplots()
+fig1, ax1 = plt.subplots()
 
-# Curvas de rendimiento
-ax.plot(df_actual['Plazo'], df_actual['Rendimiento'], label=f'Curva Actual ({fecha_actual_str})', marker='o')
-ax.plot(df_seleccionado['Plazo'], df_seleccionado['Rendimiento'], label=f'Curva {fecha_comparar_str}', marker='o')
+# Curvas de rendimiento para las dos fechas seleccionadas
+datos_actuales = {plazo: data.loc[:fecha_actual].iloc[-1] for plazo, data in tasas_bonos.items() if not data.loc[:fecha_actual].empty}
+datos_comparados = {plazo: data.loc[:fecha_comparar].iloc[-1] for plazo, data in tasas_bonos.items() if not data.loc[:fecha_comparar].empty}
+
+# Graficar las curvas
+ax1.plot(list(datos_actuales.keys()), list(datos_actuales.values()), marker='o', label=f'Curva {fecha_actual_str}')
+ax1.plot(list(datos_comparados.keys()), list(datos_comparados.values()), marker='o', label=f'Curva {fecha_comparar_str}')
 
 # Líneas horizontales para las tasas de la Fed
+tasa_fed_actual = tasas_fed.loc[:fecha_actual].iloc[-1] if not tasas_fed.loc[:fecha_actual].empty else None
+tasa_fed_comparada = tasas_fed.loc[:fecha_comparar].iloc[-1] if not tasas_fed.loc[:fecha_comparar].empty else None
+
 if tasa_fed_actual is not None:
-    ax.axhline(y=tasa_fed_actual, color='blue', linestyle='--', label=f'Tasa Fed Actual: {tasa_fed_actual}%')
-if tasa_fed_seleccionada is not None:
-    ax.axhline(y=tasa_fed_seleccionada, color='orange', linestyle='--', label=f'Tasa Fed {fecha_comparar_str}: {tasa_fed_seleccionada}%')
+    ax1.axhline(y=tasa_fed_actual, color='blue', linestyle='--', label=f'Tasa Fed {fecha_actual_str}: {tasa_fed_actual:.2f}%')
+if tasa_fed_comparada is not None:
+    ax1.axhline(y=tasa_fed_comparada, color='orange', linestyle='--', label=f'Tasa Fed {fecha_comparar_str}: {tasa_fed_comparada:.2f}%')
 
-# Ajustar el rango del eje Y para incluir las tasas de la Fed
-max_rendimiento = max(
-    df_actual['Rendimiento'].max(),
-    df_seleccionado['Rendimiento'].max(),
-    tasa_fed_actual or 0,
-    tasa_fed_seleccionada or 0
-)
-ax.set_ylim(0, max_rendimiento + 1)
-
-# Configuración de ejes y leyendas
-ax.set_xlabel('Plazo')
-ax.set_ylabel('Rendimiento (%)')
-ax.legend()
-ax.grid(True)
+# Configuración del gráfico
+ax1.set_xlabel('Plazo')
+ax1.set_ylabel('Rendimiento (%)')
+ax1.legend()
+ax1.grid(True)
 
 # Mostrar el gráfico en Streamlit
-st.pyplot(fig)
+st.pyplot(fig1)
+
+# Gráfico de boxplot
+fig2, ax2 = plt.subplots()
+
+# Preparar los datos para el boxplot
+boxplot_data = [data.dropna().values for data in tasas_bonos_filtradas.values()]
+boxplot_labels = list(tasas_bonos_filtradas.keys())
+
+# Agregar la tasa de la Fed al boxplot
+if not tasas_fed_filtrada.empty:
+    boxplot_data.append(tasas_fed_filtrada.dropna().values)
+    boxplot_labels.append('Tasa Fed')
+
+# Crear el boxplot (orientación vertical)
+ax2.boxplot(boxplot_data, labels=boxplot_labels)
+
+# Agregar puntos rojos para los valores actuales
+for i, (plazo, data) in enumerate(tasas_bonos.items(), start=1):
+    if plazo in datos_actuales:
+        ax2.plot(i, datos_actuales[plazo], 'ro')  # Valor actual en rojo
+
+# Agregar el valor actual de la tasa Fed
+if tasa_fed_actual is not None:
+    ax2.plot(len(boxplot_labels), tasa_fed_actual, 'ro')  # Último valor de la tasa Fed
+
+# Configuración del gráfico
+ax2.set_ylabel('Rendimiento (%)')
+ax2.set_xlabel('Instrumentos')
+ax2.set_title('Distribución de las tasas entre las fechas seleccionadas')
+
+# Mostrar el gráfico de boxplot en Streamlit
+st.pyplot(fig2)
